@@ -15,7 +15,7 @@ public sealed class Plugin : IExtensionProvider
 
     public void Initialize(IExtensionContext context)
     {
-        _features.Clear();
+        if (_features.Count > 0) return;
 
         var featureTypes = typeof(Plugin).Assembly.GetTypes()
             .Where(t => t is { IsAbstract: false, IsClass: true } && typeof(IUiFeature).IsAssignableFrom(t));

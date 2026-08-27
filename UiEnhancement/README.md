@@ -56,7 +56,7 @@ Copy-Item "UiEnhancement\dist\UiEnhancement.dll" "$env:LOCALAPPDATA\LenovoLegion
 
 ```powershell
 Remove-Item "$env:LOCALAPPDATA\LenovoLegionToolkit\Plugins\UiEnhancement.dll" -Force -ErrorAction Ignore
-Remove-Item "$env:LOCALAPPDATA\LenovoLegionToolkit\ui_enhancement.json" -Force -ErrorAction Ignore
+Remove-Item "$env:LOCALAPPDATA\LenovoLegionToolkit\Plugins\Configs\UiEnhancement.Plugin" -Recurse -Force -ErrorAction Ignore
 ```
 
 ---

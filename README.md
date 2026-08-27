@@ -33,7 +33,7 @@ Get-ChildItem -Path "*\dist\*.dll" | Copy-Item -Destination "$env:LOCALAPPDATA\L
 
 ```powershell
 Remove-Item "$env:LOCALAPPDATA\LenovoLegionToolkit\Plugins\*.dll" -Force -ErrorAction Ignore
-Remove-Item "$env:LOCALAPPDATA\LenovoLegionToolkit\ui_enhancement.json" -Force -ErrorAction Ignore
+Remove-Item "$env:LOCALAPPDATA\LenovoLegionToolkit\Plugins\Configs\UiEnhancement.Plugin" -Recurse -Force -ErrorAction Ignore
 ```
 
 ---

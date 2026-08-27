@@ -5,6 +5,9 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Forms;
+using System.Windows.Interop;
 using System.Windows.Media;
 using LenovoLegionToolkit.Lib.Station.Core;
 using LenovoLegionToolkit.Lib.Utils;
@@ -12,7 +15,13 @@ using LenovoLegionToolkit.WPF.Controls;
 using LenovoLegionToolkit.WPF.Controls.Custom;
 using LenovoLegionToolkit.WPF.Controls.Settings;
 using LenovoLegionToolkit.WPF.Resources;
+using LenovoLegionToolkit.WPF.Windows.Osd;
 using Wpf.Ui.Common;
+using Application = System.Windows.Application;
+using ComboBox = System.Windows.Controls.ComboBox;
+using ContextMenu = System.Windows.Controls.ContextMenu;
+using Point = System.Windows.Point;
+using ToolTip = System.Windows.Controls.ToolTip;
 
 namespace UiEnhancement.Features;
 
@@ -21,7 +30,7 @@ namespace UiEnhancement.Features;
 /// </summary>
 public sealed class UiScaler : IUiFeature
 {
-    private static readonly string ConfigPath = Path.Combine(Folders.AppData, "ui_enhancement.json");
+    private const string PluginId = "UiEnhancement.Plugin";
     private static readonly (string Text, double Val)[] Scales =
     [
         ("100%", 1.00), ("110%", 1.10), ("125%", 1.25),
@@ -30,9 +39,21 @@ public sealed class UiScaler : IUiFeature
 
     private static readonly ConditionalWeakTable<Window, WindowBounds> BaseSizes = [];
     private static IExtensionContext? _context;
-    private static double _scale = 1.25;
+    private static double _scale = 1.0;
+    private static bool _registered;
+    private static bool _enabled;
 
     public static double Scale => _scale;
+
+    public static ScaleTransform CurrentTransform
+    {
+        get
+        {
+            var transform = new ScaleTransform(_scale, _scale);
+            transform.Freeze();
+            return transform;
+        }
+    }
 
     private static bool IsChinese =>
         Resource.Culture?.Name.StartsWith("zh", StringComparison.OrdinalIgnoreCase) ??
@@ -41,18 +62,52 @@ public sealed class UiScaler : IUiFeature
     public void Initialize(IExtensionContext context)
     {
         _context = context;
+        _enabled = true;
         _scale = LoadScale();
+
+        if (_registered) return;
+        _registered = true;
 
         Application.Current?.Dispatcher.Invoke(() =>
         {
             EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
-                new RoutedEventHandler((s, _) => { if (s is Window w) Apply(w); }));
+                new RoutedEventHandler((s, _) => { if (_enabled && s is Window w) Apply(w); }));
+
             EventManager.RegisterClassHandler(typeof(SettingsAppearanceControl), FrameworkElement.LoadedEvent,
-                new RoutedEventHandler((s, _) => { if (s is SettingsAppearanceControl c) InjectSettings(c); }));
+                new RoutedEventHandler((s, _) => { if (_enabled && s is SettingsAppearanceControl c) InjectSettings(c); }));
+
+            RegisterPopupHandlers();
 
             if (Application.Current.MainWindow is { } main)
                 Apply(main);
         });
+    }
+
+    private static void RegisterPopupHandlers()
+    {
+        EventManager.RegisterClassHandler(typeof(ContextMenu), FrameworkElement.LoadedEvent,
+            new RoutedEventHandler((s, _) => { if (_enabled && s is ContextMenu c) c.LayoutTransform = CurrentTransform; }));
+
+        EventManager.RegisterClassHandler(typeof(ToolTip), FrameworkElement.LoadedEvent,
+            new RoutedEventHandler((s, _) => { if (_enabled && s is ToolTip t) t.LayoutTransform = CurrentTransform; }));
+
+        EventManager.RegisterClassHandler(typeof(Popup), FrameworkElement.LoadedEvent,
+            new RoutedEventHandler((s, _) =>
+            {
+                if (s is Popup p)
+                {
+                    p.Opened -= OnPopupOpened;
+                    p.Opened += OnPopupOpened;
+                    if (_enabled && p.Child is FrameworkElement child)
+                        child.LayoutTransform = CurrentTransform;
+                }
+            }));
+    }
+
+    private static void OnPopupOpened(object? sender, EventArgs e)
+    {
+        if (_enabled && sender is Popup { Child: FrameworkElement child })
+            child.LayoutTransform = CurrentTransform;
     }
 
     public object? GetData(string key) => key == "Scale" ? _scale : null;
@@ -69,27 +124,31 @@ public sealed class UiScaler : IUiFeature
 
     public static void SetScale(double scale)
     {
-        _scale = Math.Clamp(scale, 0.8, 3.0);
+        _scale = Math.Clamp(scale, 1.0, 2.0);
         SaveScale(_scale);
 
         Application.Current?.Dispatcher.Invoke(() =>
         {
             foreach (Window w in Application.Current.Windows)
+            {
                 Apply(w);
+            }
         });
     }
 
     public static void Apply(Window win)
     {
-        if (win.GetType().FullName?.Contains(".Osd.", StringComparison.OrdinalIgnoreCase) == true) return;
+        if (win is OsdWindowBase) return;
         if (win.AllowsTransparency && win.WindowStyle == WindowStyle.None && win is not Wpf.Ui.Controls.UiWindow) return;
 
         if (win.Content is FrameworkElement content)
-        {
-            var transform = new ScaleTransform(_scale, _scale);
-            transform.Freeze();
-            content.LayoutTransform = transform;
-        }
+            content.LayoutTransform = CurrentTransform;
+
+        // 根据缩放倍率自动设置文本渲染模式，与 ChineseFontOptimizer 保持解耦
+        var crisp = Math.Abs(_scale % 1.0) < 0.001;
+        win.UseLayoutRounding = crisp;
+        win.SnapsToDevicePixels = crisp;
+        TextOptions.SetTextFormattingMode(win, crisp ? TextFormattingMode.Display : TextFormattingMode.Ideal);
 
         var bs = BaseSizes.GetValue(win, w =>
         {
@@ -98,7 +157,7 @@ public sealed class UiScaler : IUiFeature
             return new WindowBounds(width, height, w.MinWidth, w.MinHeight, w.MaxWidth, w.MaxHeight);
         });
 
-        var work = SystemParameters.WorkArea;
+        var work = GetWorkArea(win);
         double maxW = work.Width * 0.96, maxH = work.Height * 0.96;
 
         static double ScaleVal(double v, double max) => !double.IsNaN(v) && !double.IsInfinity(v) && v > 0 ? Math.Min(v * _scale, max) : double.NaN;
@@ -110,12 +169,54 @@ public sealed class UiScaler : IUiFeature
         {
             if (ScaleVal(bs.W, maxW) is var w && !double.IsNaN(w)) win.Width = w;
             if (ScaleVal(bs.H, maxH) is var h && !double.IsNaN(h)) win.Height = h;
-            if (win.Left + win.Width > work.Right) win.Left = Math.Max(work.Left, work.Right - win.Width);
-            if (win.Top + win.Height > work.Bottom) win.Top = Math.Max(work.Top, work.Bottom - win.Height);
+
+            if (win.WindowStartupLocation == WindowStartupLocation.CenterOwner && win.Owner is { } owner)
+            {
+                win.Left = owner.Left + (owner.ActualWidth - win.Width) / 2;
+                win.Top = owner.Top + (owner.ActualHeight - win.Height) / 2;
+            }
+
+            if (!double.IsNaN(win.Left) && !double.IsNaN(win.Width))
+            {
+                if (win.Left + win.Width > work.Right) win.Left = Math.Max(work.Left, work.Right - win.Width);
+                if (win.Left < work.Left) win.Left = work.Left;
+            }
+
+            if (!double.IsNaN(win.Top) && !double.IsNaN(win.Height))
+            {
+                if (win.Top + win.Height > work.Bottom) win.Top = Math.Max(work.Top, work.Bottom - win.Height);
+                if (win.Top < work.Top) win.Top = work.Top;
+            }
         }
 
         if (ScaleVal(bs.MinW, maxW) is var minW && !double.IsNaN(minW)) win.MinWidth = minW;
         if (ScaleVal(bs.MinH, maxH) is var minH && !double.IsNaN(minH)) win.MinHeight = minH;
+    }
+
+    private static Rect GetWorkArea(Window win)
+    {
+        try
+        {
+            var targetWin = (win.WindowStartupLocation == WindowStartupLocation.CenterOwner && win.Owner is { } owner) ? owner : win;
+            var source = PresentationSource.FromVisual(targetWin) ?? PresentationSource.FromVisual(win);
+            if (source?.CompositionTarget is null) return SystemParameters.WorkArea;
+
+            var handle = new WindowInteropHelper(targetWin).Handle;
+            if (handle == IntPtr.Zero) handle = new WindowInteropHelper(win).Handle;
+
+            var area = handle == IntPtr.Zero
+                ? Screen.PrimaryScreen?.WorkingArea ?? new System.Drawing.Rectangle(0, 0, (int)SystemParameters.WorkArea.Width, (int)SystemParameters.WorkArea.Height)
+                : Screen.FromHandle(handle).WorkingArea;
+
+            var m = source.CompositionTarget.TransformFromDevice;
+            var lt = m.Transform(new Point(area.Left, area.Top));
+            var rb = m.Transform(new Point(area.Right, area.Bottom));
+            return new Rect(lt, rb);
+        }
+        catch
+        {
+            return SystemParameters.WorkArea;
+        }
     }
 
     private static void InjectSettings(SettingsAppearanceControl ctrl)
@@ -125,15 +226,27 @@ public sealed class UiScaler : IUiFeature
             if (panel.Children[i] is FrameworkElement { Name: "ScaleCardControl" }) return;
 
         var combo = new ComboBox { MinWidth = 160, Margin = new Thickness(0, 0, 0, 8) };
+        var matchedIndex = -1;
         for (var i = 0; i < Scales.Length; i++)
         {
             combo.Items.Add(Scales[i].Text);
-            if (Math.Abs(Scales[i].Val - _scale) < 0.03) combo.SelectedIndex = i;
+            if (Math.Abs(Scales[i].Val - _scale) < 0.03) matchedIndex = i;
+        }
+
+        if (matchedIndex >= 0)
+        {
+            combo.SelectedIndex = matchedIndex;
+        }
+        else
+        {
+            var customText = $"{_scale * 100:0}%";
+            combo.Items.Add(customText);
+            combo.SelectedIndex = combo.Items.Count - 1;
         }
 
         combo.SelectionChanged += (_, _) =>
         {
-            if (combo.SelectedIndex >= 0)
+            if (combo.SelectedIndex >= 0 && combo.SelectedIndex < Scales.Length)
                 SetScale(Scales[combo.SelectedIndex].Val);
         };
 
@@ -152,14 +265,31 @@ public sealed class UiScaler : IUiFeature
         });
     }
 
+    private static string GetConfigDirectory()
+    {
+        try
+        {
+            if (_context is not null)
+                return _context.GetPluginStoragePath(PluginId);
+        }
+        catch { }
+
+        var defaultPath = Path.Combine(Folders.AppData, "Plugins", "Configs", PluginId);
+        Directory.CreateDirectory(defaultPath);
+        return defaultPath;
+    }
+
+    private static string ConfigPath => Path.Combine(GetConfigDirectory(), "config.json");
+
     private static double LoadScale()
     {
         try
         {
-            if (File.Exists(ConfigPath))
+            var file = ConfigPath;
+            if (File.Exists(file))
             {
-                using var doc = JsonDocument.Parse(File.ReadAllText(ConfigPath));
-                if (doc.RootElement.TryGetProperty("Scale", out var prop) && prop.TryGetDouble(out var v) && v is >= 0.8 and <= 3.0)
+                using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                if (doc.RootElement.TryGetProperty("Scale", out var prop) && prop.TryGetDouble(out var v) && v is >= 1.0 and <= 2.0)
                     return v;
             }
         }
@@ -167,14 +297,15 @@ public sealed class UiScaler : IUiFeature
         {
             _context?.Logger?.Error("[UiEnhancement] Failed to load scale setting", ex);
         }
-        return 1.25;
+        return 1.0;
     }
 
     private static void SaveScale(double scale)
     {
         try
         {
-            Directory.CreateDirectory(Folders.AppData);
+            var dir = GetConfigDirectory();
+            Directory.CreateDirectory(dir);
             var json = JsonSerializer.Serialize(new { Scale = scale }, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(ConfigPath, json);
         }
@@ -186,11 +317,24 @@ public sealed class UiScaler : IUiFeature
 
     public void Dispose()
     {
+        _enabled = false;
         Application.Current?.Dispatcher.Invoke(() =>
         {
             foreach (Window w in Application.Current.Windows)
+            {
                 if (w.Content is FrameworkElement c)
                     c.LayoutTransform = Transform.Identity;
+
+                if (BaseSizes.TryGetValue(w, out var bs))
+                {
+                    if (!double.IsNaN(bs.W)) w.Width = bs.W;
+                    if (!double.IsNaN(bs.H)) w.Height = bs.H;
+                    if (!double.IsNaN(bs.MinW)) w.MinWidth = bs.MinW;
+                    if (!double.IsNaN(bs.MinH)) w.MinHeight = bs.MinH;
+                    if (!double.IsNaN(bs.MaxW)) w.MaxWidth = bs.MaxW;
+                    if (!double.IsNaN(bs.MaxH)) w.MaxHeight = bs.MaxH;
+                }
+            }
         });
     }
 
