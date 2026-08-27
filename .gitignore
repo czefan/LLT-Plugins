@@ -1,0 +1,10 @@
+# Ignore reference source directories at repository root
+/LenovoLegionToolkit-*/
+
+# Common build and IDE artifacts
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo

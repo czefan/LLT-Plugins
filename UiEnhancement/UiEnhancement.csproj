@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows10.0.26100.0</TargetFramework>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>UiEnhancement</AssemblyName>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LenovoLegionToolkit-master\LenovoLegionToolkit.Lib\LenovoLegionToolkit.Lib.csproj" />
+    <ProjectReference Include="..\LenovoLegionToolkit-master\LenovoLegionToolkit.WPF\LenovoLegionToolkit.WPF.csproj" />
+  </ItemGroup>
+
+  <Target Name="CopyToDist" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ProjectDir)dist\" ContinueOnError="true" />
+  </Target>
+</Project>
