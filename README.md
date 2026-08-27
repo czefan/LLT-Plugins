@@ -10,7 +10,7 @@ LLT 原生支持基于 `IExtensionProvider` 接口的扩展加载机制，无需
 
 | 插件 | 目录 | 说明 |
 | :--- | :--- | :--- |
-| **🎨 UI Enhancement** | [`UiEnhancement`](./UiEnhancement) | 界面矢量缩放、微软雅黑与 ClearType 字体优化、自定义模式滑块悬浮数值重构 |
+| **🎨 UI Enhancement** | [`UiEnhancement`](./UiEnhancement) | 界面矢量缩放、微软雅黑与 ClearType 字体优化、自定义模式滑块悬浮数值重构、托盘气泡免驱动温度与风扇监控 |
 
 ---
 
